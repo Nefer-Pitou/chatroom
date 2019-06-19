@@ -6,7 +6,6 @@ import (
 	"github.com/gorilla/websocket"
 	"log"
 	"net/http"
-	"time"
 )
 
 var (
@@ -15,8 +14,6 @@ var (
 			return true
 		},
 	}
-	//思路：当一个用户连接时，为他分配到一个房间内，
-	roomMap = make(map[int]impl.Room) //房间集合
 )
 
 func main() {
@@ -27,12 +24,13 @@ func main() {
 }
 
 func wsHandler(w http.ResponseWriter, r *http.Request) {
-	//w.Write([]byte("hello"))
 	var (
 		wsConn *websocket.Conn
 		err    error
 		conn   *impl.Connection
 		str    string
+		room   *impl.Room
+		msg    impl.Message
 	)
 	//Upgrade:websocket  这里返回升级websocket确认
 	if wsConn, err = upgrader.Upgrade(w, r, nil); err != nil {
@@ -42,62 +40,16 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	if conn, err = impl.InitConnection(wsConn); err != nil {
 		conn.Close()
 	}
-
-	//写数据
-	go func() {
-		for {
-			str = fmt.Sprintf("服务器时间：%s", time.Now().Format("2006-01-02 15:04:05"))
-			if err := conn.WriteMessage([]byte(str)); err != nil {
-				log.Println(err)
-				goto ERR
-			}
-			log.Println("服务端：", str)
-			time.Sleep(time.Second * 5)
-		}
-	ERR:
-		fmt.Println("wsHandler写数据")
-		conn.Close()
-	}()
-
-	//读数据
-	go func() {
-		var (
-			data []byte
-			err  error
-		)
-		for {
-			if data, err = conn.ReadMessage(); err != nil {
-				log.Println(err)
-				goto ERR
-			}
-			log.Println("客户端：", string(data))
-		}
-	ERR:
-		fmt.Println("wsHandler读数据")
-		conn.Close()
-	}()
-
-}
-
-func wsHandler2(w http.ResponseWriter, r *http.Request) {
-	var (
-		conn *websocket.Conn
-		err  error
-		data []byte
-	)
-	conn, err = upgrader.Upgrade(w, r, nil)
-	for {
-		log.Println("for:")
-		//Text,Binary
-		if _, data, err = conn.ReadMessage(); err != nil {
-			//关闭连接
-			goto ERR
-		}
-		log.Println("data:", data)
-		if err = conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			goto ERR
-		}
+	v, ok := impl.RoomMap.Load(conn.RoomId)
+	if !ok { //房间不存在则初始化房间并存入RoomMap中
+		room = impl.InitRoom()
+		impl.RoomMap.Store(conn.RoomId, room)
+	} else {
+		room = v.(*impl.Room)
 	}
-ERR:
-	conn.Close()
+	//将conn存入房间中
+	room.PutConn(conn)
+	str = fmt.Sprintf("%d号房间加入一名新用户", conn.RoomId)
+	msg = impl.Message{ConnId: 0, Msg: str}
+	room.PutMsg(msg)
 }
